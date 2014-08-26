@@ -8,7 +8,6 @@ package org.sikuli.scriptrunner;
 
 //import java.io.File;
 import org.sikuli.basics.Debug;
-import org.sikuli.basics.IScriptRunner;
 
 import java.io.File;
 import java.io.BufferedReader;
@@ -28,23 +27,21 @@ import java.util.List;
 
 import org.sikuli.basics.FileManager;
 import org.sikuli.basics.Settings;
-import org.sikuli.basics.Sikulix;
 
 import org.jruby.embed.ScriptingContainer;
 import org.jruby.javasupport.JavaEmbedUtils.EvalUnit;
 import org.jruby.CompatVersion;
 import org.jruby.embed.LocalContextScope;
 import org.jruby.RubyInstanceConfig.CompileMode;
+import org.sikuli.script.Sikulix;
 
 public class JRubyScriptRunner implements IScriptRunner {
 
 	//<editor-fold defaultstate="collapsed" desc="new logging concept">
 	private static final String me = "JRubyScriptRunner: ";
 	private int lvl = 3;
-
 	private void log(int level, String message, Object... args) {
-		Debug.logx(level, level < 0 ? "error" : "debug",
-						me + message, args);
+		Debug.logx(level,	me + message, args);
 	}
 	//</editor-fold>
 
@@ -64,7 +61,7 @@ public class JRubyScriptRunner implements IScriptRunner {
 	private final static String SCRIPT_HEADER
 					= "# coding: utf-8\n"
 					+ "require 'Lib/sikulix'\n"
-					+ "include SikuliX4Ruby\n";
+					+ "include Sikulix\n";
 
 	private static ArrayList<String> codeBefore = null;
 	private static ArrayList<String> codeAfter = null;
@@ -145,7 +142,6 @@ public class JRubyScriptRunner implements IScriptRunner {
                 + "print \"Hello, this is your interactive Sikuli (rules for interactive Ruby apply)\\n"
                 + "use the UP/DOWN arrow keys to walk through the input history\\n"
                 + "help()<enter> will output some basic Ruby information\\n"
-                + "shelp()<enter> will output some basic Sikuli information\\n"
                 + "... use ctrl-d to end the session\"\n"
                 + "IRB.start(__FILE__)\n"
             };
@@ -186,7 +182,12 @@ public class JRubyScriptRunner implements IScriptRunner {
 
 	@Override
 	public String getName() {
-		return Settings.RRUBY;
+    try {
+      Class.forName("org.jruby.embed.ScriptingContainer");
+    } catch (ClassNotFoundException ex) {
+      return null;
+    }
+		return ScriptRunner.RRUBY;
 	}
 
 	@Override
@@ -514,7 +515,9 @@ public class JRubyScriptRunner implements IScriptRunner {
 		try {
 			PipedOutputStream pout = new PipedOutputStream(pin[0]);
 			PrintStream ps = new PrintStream(pout, true);
-			System.setOut(ps);
+      if (!ScriptRunner.systemRedirected) {
+        System.setOut(ps);
+      }
 			interpreter.setOutput(ps);
 		} catch (Exception e) {
 			log(-1, "%s: redirect STDOUT: %s", getName(), e.getMessage());
@@ -523,7 +526,9 @@ public class JRubyScriptRunner implements IScriptRunner {
 		try {
 			PipedOutputStream pout = new PipedOutputStream(pin[1]);
 			PrintStream ps = new PrintStream(pout, true);
-			System.setErr(ps);
+      if (!ScriptRunner.systemRedirected) {
+        System.setErr(ps);
+      }
 			interpreter.setError(ps);
 		} catch (Exception e) {
 			log(-1, "%s: redirect STDERR: %s", getName(), e.getMessage());

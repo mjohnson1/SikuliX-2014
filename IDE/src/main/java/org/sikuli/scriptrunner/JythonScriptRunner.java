@@ -17,13 +17,16 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.python.core.PyInstance;
 import org.python.core.PyList;
+import org.python.core.PyObject;
+import org.python.core.PyString;
 import org.python.util.PythonInterpreter;
 import org.python.util.jython;
 import org.sikuli.basics.Debug;
 import org.sikuli.basics.FileManager;
-import org.sikuli.basics.IScriptRunner;
 import org.sikuli.basics.Settings;
+import org.sikuli.script.Sikulix;
 
 /**
  * Executes Sikuliscripts written in Python/Jython.
@@ -32,12 +35,9 @@ public class JythonScriptRunner implements IScriptRunner {
 
 	//<editor-fold defaultstate="collapsed" desc="new logging concept">
 	private static final String me = "JythonScriptRunner: ";
-//  private String mem = "...";
 	private int lvl = 3;
-
 	private void log(int level, String message, Object... args) {
-		Debug.logx(level, level < 0 ? "error" : "debug",
-						me + message, args);
+		Debug.logx(level,	me + message, args);
 	}
 	//</editor-fold>
 
@@ -96,7 +96,7 @@ public class JythonScriptRunner implements IScriptRunner {
 	 */
 	@Override
 	public void init(String[] param) {
-		String jarPath = getJarPath();
+		String jarPath = Sikulix.getJarPath();
 		sikuliLibPath = new File(jarPath, "Lib").getAbsolutePath();
 		if (!jarPath.isEmpty() && jarPath.endsWith(".jar") && sikuliLibPath.contains("sikulix")) {
 			if (System.getProperty("python.path") == null) {
@@ -110,15 +110,6 @@ public class JythonScriptRunner implements IScriptRunner {
 								+ "Current python.path: " + pp);
 			}
 		}
-	}
-
-	private String getJarPath() {
-		CodeSource codeSrc = org.sikuli.basics.Sikulix.class.getProtectionDomain().getCodeSource();
-		if (codeSrc	!= null && codeSrc.getLocation() != null) {
-			URL jarURL = codeSrc.getLocation();
-			return FileManager.slashify(new File(jarURL.getPath()).getAbsolutePath(), false);
-		}
-		return "";
 	}
 
 	/**
@@ -398,7 +389,6 @@ public class JythonScriptRunner implements IScriptRunner {
 			+ "print \"Hello, this is your interactive Sikuli (rules for interactive Python apply)\\n"
 			+ "use the UP/DOWN arrow keys to walk through the input history\\n"
 			+ "help()<enter> will output some basic Python information\\n"
-			+ "shelp()<enter> will output some basic Sikuli information\\n"
 			+ "... use ctrl-d to end the session\""};
 		if (argv != null && argv.length > 0) {
 			jy_args = new String[argv.length + iargs.length];
@@ -440,7 +430,12 @@ public class JythonScriptRunner implements IScriptRunner {
 	 */
 	@Override
 	public String getName() {
-		return Settings.RPYTHON;
+    try {
+      Class.forName("org.python.util.PythonInterpreter");
+    } catch (ClassNotFoundException ex) {
+      return null;
+    }
+		return ScriptRunner.RPYTHON;
 	}
 
 	/**
@@ -522,9 +517,64 @@ public class JythonScriptRunner implements IScriptRunner {
 		} else if ("createRegionForWith".equals(action)) {
 			args[0] = createRegionForWith(args[0]);
 			return true;
+		} else if ("checkCallback".equals(action)) {
+			return checkCallback(args);
+		} else if ("runLoggerCallback".equals(action)) {
+			return runLoggerCallback(args);
+		} else if ("runCallback".equals(action)) {
+			return runCallback(args);
 		} else {
 			return false;
 		}
+	}
+
+	private boolean checkCallback(Object[] args) {
+		PyInstance inst = (PyInstance) args[0];
+		String mName = (String) args[1];
+		PyObject method = inst.__getattr__(mName);
+		if (method == null || !method.getClass().getName().contains("PyMethod")) {
+  		log(-100, "checkCallback: Object: %s, Method not found: %s", inst, mName);
+			return false;
+		}
+		return true;
+	}
+
+	private boolean runLoggerCallback(Object[] args) {
+		PyInstance inst = (PyInstance) args[0];
+		String mName = (String) args[1];
+		String msg = (String) args[2];
+		PyObject method = inst.__getattr__(mName);
+		if (method == null || !method.getClass().getName().contains("PyMethod")) {
+  		log(-100, "runLoggerCallback: Object: %s, Method not found: %s", inst, mName);
+			return false;
+		}
+		try {
+			PyString pmsg = new PyString(msg);
+			inst.invoke(mName, pmsg);
+		} catch (Exception ex) {
+			log(-100, "runLoggerCallback: invoke: %s", ex.getMessage());
+			return false;
+		}
+		return true;
+	}
+
+//TODO implement generalized callback
+  private boolean runCallback(Object[] args) {
+		PyInstance inst = (PyInstance) args[0];
+		String mName = (String) args[1];
+		PyObject method = inst.__getattr__(mName);
+		if (method == null || !method.getClass().getName().contains("PyMethod")) {
+  		log(-1, "runCallback: Object: %s, Method not found: %s", inst, mName);
+			return false;
+		}
+		try {
+			PyString pmsg = new PyString("not yet supported");
+			inst.invoke(mName, pmsg);
+		} catch (Exception ex) {
+			log(-1, "runCallback: invoke: %s", ex.getMessage());
+			return false;
+		}
+		return true;
 	}
 
 //TODO revise the before/after concept (to support IDE reruns)
@@ -614,20 +664,25 @@ public class JythonScriptRunner implements IScriptRunner {
 
 	private boolean doRedirect(PipedInputStream[] pin) {
 		PythonInterpreter py = getPythonInterpreter();
+		Debug.saveRedirected(System.out, System.err);
 		try {
 			PipedOutputStream pout = new PipedOutputStream(pin[0]);
 			PrintStream ps = new PrintStream(pout, true);
-			System.setOut(ps);
+      if (!ScriptRunner.systemRedirected) {
+  			System.setOut(ps);
+      }
 			py.setOut(ps);
 		} catch (Exception e) {
 			log(-1, "%s: redirect STDOUT: %s", getName(), e.getMessage());
 			return false;
 		}
 		try {
-			PipedOutputStream pout = new PipedOutputStream(pin[1]);
-			PrintStream ps = new PrintStream(pout, true);
-			System.setErr(ps);
-			py.setErr(ps);
+			PipedOutputStream eout = new PipedOutputStream(pin[1]);
+			PrintStream eps = new PrintStream(eout, true);
+      if (!ScriptRunner.systemRedirected) {
+        System.setErr(eps);
+      }
+			py.setErr(eps);
 		} catch (Exception e) {
 			log(-1, "%s: redirect STDERR: %s", getName(), e.getMessage());
 			return false;

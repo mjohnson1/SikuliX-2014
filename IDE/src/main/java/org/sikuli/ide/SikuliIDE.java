@@ -17,7 +17,13 @@ import java.io.*;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.net.URL;
-import java.util.*;
+//import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import javax.swing.*;
 import javax.swing.event.*;
 import javax.swing.text.*;
@@ -27,7 +33,6 @@ import org.jdesktop.swingx.JXCollapsiblePane;
 import org.jdesktop.swingx.JXSearchField;
 import org.jdesktop.swingx.JXTaskPane;
 import org.jdesktop.swingx.JXTaskPaneContainer;
-import org.sikuli.basics.CommandArgs;
 import org.sikuli.script.EventObserver;
 import org.sikuli.script.EventSubject;
 import org.sikuli.basics.HotkeyEvent;
@@ -39,26 +44,24 @@ import org.sikuli.script.Screen;
 import org.sikuli.script.ScreenImage;
 import org.sikuli.basics.Debug;
 import org.sikuli.basics.FileManager;
-import org.sikuli.basics.IScriptRunner;
+import org.sikuli.scriptrunner.IScriptRunner;
 import org.sikuli.basics.PreferencesUser;
 import org.sikuli.basics.Settings;
-import org.sikuli.basics.AutoUpdater;
-import org.sikuli.basics.CommandArgsEnum;
-import org.sikuli.basics.IDESupport;
+import org.sikuli.idesupport.IIDESupport;
 import org.sikuli.script.ImagePath;
-import org.sikuli.basics.MultiFrame;
+import org.sikuli.basics.SplashFrame;
 import org.sikuli.basics.ResourceLoader;
-import org.sikuli.basics.SikuliScript;
-import org.sikuli.basics.Sikulix;
+import org.sikuli.scriptrunner.ScriptRunner;
+import org.sikuli.idesupport.IDESupport;
 import org.sikuli.script.Key;
+import org.sikuli.script.Sikulix;
 
 public class SikuliIDE extends JFrame {
 
-  private static String me = "IDE";
+  private static String me = "IDE: ";
   private static int lvl = 3;
-
   private static void log(int level, String message, Object... args) {
-    Debug.logx(level, "", me + ": " + message, args);
+    Debug.logx(level, me + message, args);
   }
   // RaiMan not used final static boolean ENABLE_RECORDING = false;
   final static boolean ENABLE_UNIFIED_TOOLBAR = true;
@@ -68,13 +71,11 @@ public class SikuliIDE extends JFrame {
   final static int WARNING_ACCEPTED = 1;
   final static int WARNING_DO_NOTHING = 0;
   final static int IS_SAVE_ALL = 3;
-  static boolean _runningSkl = false;
   private static NativeSupport nativeSupport;
   private Dimension _windowSize = null;
   private Point _windowLocation = null;
-  private boolean smallScreen = false;
   private int commandBarHeight = 800;
-  private CloseableTabbedPane _mainPane;
+  private CloseableTabbedPane tabPane;
   private EditorLineNumberView lineNumberColumn;
   private JSplitPane _mainSplitPane;
   private JTabbedPane msgPane;
@@ -103,8 +104,10 @@ public class SikuliIDE extends JFrame {
   //private UnitTestRunner _testRunner;
   private static CommandLine cmdLine;
   private static String cmdValue;
-  private static String[] loadScript = null;
-  private static SikuliIDE _instance = null;
+  private static String[] loadScripts = null;
+  private static String[] runScripts = null;
+  private static String[] testScripts = null;
+  private static SikuliIDE sikulixIDE = null;
   private boolean _inited = false;
   private static boolean runMe = false;
   private int restoredScripts = 0;
@@ -120,8 +123,24 @@ public class SikuliIDE extends JFrame {
   static {
   }
 
-  public static IDESupport getIDESupport(String ending) {
-    return Settings.ideSupporter.get(ending);
+  private SikuliIDE() {
+    super("SikuliX-IDE");
+  }
+
+  public static synchronized SikuliIDE getInstance(String args[]) {
+    if (sikulixIDE == null) {
+      sikulixIDE = new SikuliIDE();
+      sikulixIDE.initSikuliIDE(args);
+    }
+    return sikulixIDE;
+  }
+
+  public static synchronized SikuliIDE getInstance() {
+    return getInstance(null);
+  }
+
+  public static IIDESupport getIDESupport(String ending) {
+    return IDESupport.ideSupporter.get(ending);
   }
 
   public static String _I(String key, Object... args) {
@@ -163,7 +182,7 @@ public class SikuliIDE extends JFrame {
     });
 
     if (System.getProperty("sikuli.FromCommandLine") == null) {
-      String[] userOptions = Sikulix.collectOptions("IDE", args);
+      String[] userOptions = collectOptions("IDE", args);
       if (userOptions == null) {
         System.exit(0);
       }
@@ -177,13 +196,8 @@ public class SikuliIDE extends JFrame {
 
     start = (new Date()).getTime();
 
-    Settings.initScriptingSupport();
-
-    for (String e : args) {
-      splashArgs[3] += e + " ";
-    }
-    splashArgs[3] = splashArgs[3].trim();
-    splash = new MultiFrame(splashArgs);
+    ScriptRunner.initScriptingSupport();
+		IDESupport.initIDESupport();
 
     CommandArgs cmdArgs = new CommandArgs("IDE");
     cmdLine = cmdArgs.getCommandLine(CommandArgs.scanArgs(args));
@@ -228,21 +242,19 @@ public class SikuliIDE extends JFrame {
     }
 
     if (cmdLine.hasOption(CommandArgsEnum.LOAD.shortname())) {
-      loadScript = cmdLine.getOptionValues(CommandArgsEnum.LOAD.longname());
-      log(lvl, "requested to load: " + loadScript);
-      if (loadScript[0].endsWith(".skl")) {
-        log(lvl, "Switching to SikuliScript to run " + loadScript);
-        splash.dispose();
-        SikuliScript.runscript(args);
+      loadScripts = cmdLine.getOptionValues(CommandArgsEnum.LOAD.longname());
+      log(lvl, "requested to load: " + loadScripts);
+      if (loadScripts[0].endsWith(".skl")) {
+        log(lvl, "Switching to ScriptRunner to run " + loadScripts[0]);
+        ScriptRunner.runscript(args);
       }
     }
 
     if (cmdLine.hasOption(CommandArgsEnum.RUN.shortname())
             || cmdLine.hasOption(CommandArgsEnum.TEST.shortname())
             || cmdLine.hasOption(CommandArgsEnum.INTERACTIVE.shortname())) {
-      log(lvl, "Switching to SikuliScript with option -r, -t or -i");
-      splash.dispose();
-      SikuliScript.runscript(args);
+      log(lvl, "Switching to ScriptRunner with option -r, -t or -i");
+      ScriptRunner.runscript(args);
     }
 
     new File(Settings.BaseTempPath).mkdirs();
@@ -252,14 +264,14 @@ public class SikuliIDE extends JFrame {
       isRunningFile = new FileOutputStream(isRunning);
       if (null == isRunningFile.getChannel().tryLock()) {
         splashArgs[5] = "Terminating on FatalError: IDE already running";
-        splash = new MultiFrame(splashArgs);
+        splash = new SplashFrame(splashArgs);
         log(-1, splashArgs[5]);
         Sikulix.pause(3);
         System.exit(1);
       }
     } catch (Exception ex) {
       splashArgs[5] = "Terminating on FatalError: cannot access IDE lock ";
-      splash = new MultiFrame(splashArgs);
+      splash = new SplashFrame(splashArgs);
       log(-1, splashArgs[5] + "\n" + isRunning.getAbsolutePath());
       Sikulix.pause(3);
       System.exit(1);
@@ -288,10 +300,6 @@ public class SikuliIDE extends JFrame {
   }
 
   //<editor-fold defaultstate="collapsed" desc="IDE setup and general">
-  private SikuliIDE() {
-    super("Sikuli IDE");
-  }
-
   private void initSikuliIDE(String[] args) {
     prefs = PreferencesUser.getInstance();
     if (prefs.getUserType() < 0) {
@@ -325,22 +333,23 @@ public class SikuliIDE extends JFrame {
         _windowLocation = new Point(75, 0);
       }
     }
-    if (_windowSize.getHeight() < commandBarHeight) {
-      smallScreen = true;
-    }
     setSize(_windowSize);
     setLocation(_windowLocation);
 
+		Debug.log(3, "IDE: Adding components to window");
     initMenuBars(this);
     final Container c = getContentPane();
     c.setLayout(new BorderLayout());
+		Debug.log(3, "IDE: creating tabbed editor");
     initTabPane();
+		Debug.log(3, "IDE: creating message area");
     initMsgPane(prefs.getPrefMoreMessage() == PreferencesUser.HORIZONTAL);
 // RaiMan not used		initSidePane(); // IDE UnitTest
 
+		Debug.log(3, "IDE: creating combined work window");
     JPanel codeAndUnitPane = new JPanel(new BorderLayout(10, 10));
     codeAndUnitPane.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 0));
-    codeAndUnitPane.add(_mainPane, BorderLayout.CENTER);
+    codeAndUnitPane.add(tabPane, BorderLayout.CENTER);
 // RaiMan not used		codeAndUnitPane.add(_sidePane, BorderLayout.EAST);
     if (prefs.getPrefMoreMessage() == PreferencesUser.VERTICAL) {
       _mainSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, codeAndUnitPane, msgPane);
@@ -350,6 +359,7 @@ public class SikuliIDE extends JFrame {
     _mainSplitPane.setResizeWeight(0.6);
     _mainSplitPane.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
 
+		Debug.log(3, "IDE: Putting all together");
     JPanel editPane = new JPanel(new BorderLayout(0, 0));
 
     JComponent cp = createCommandPane();
@@ -380,7 +390,7 @@ public class SikuliIDE extends JFrame {
       getCurrentCodePane().requestFocus();
     } catch (Exception e) {
     }
-    splash.dispose();
+//    splash.dispose();
 //TODO restore selected tab
     restoreSession();
     makeTabNull();
@@ -390,23 +400,11 @@ public class SikuliIDE extends JFrame {
     return; // as breakpoint
   }
 
-  public static synchronized SikuliIDE getInstance(String args[]) {
-    if (_instance == null) {
-      _instance = new SikuliIDE();
-      _instance.initSikuliIDE(args);
-    }
-    return _instance;
-  }
-
-  public static synchronized SikuliIDE getInstance() {
-    return getInstance(null);
-  }
-
   public void makeTabNull() {
-    if (_mainPane.getTabCount() == 0) {
+    if (tabPane.getTabCount() == 0) {
       (new FileAction()).doNew(null);
     }
-    _mainPane.setSelectedIndex(0);
+    tabPane.setSelectedIndex(0);
   }
 
   @Override
@@ -444,20 +442,22 @@ public class SikuliIDE extends JFrame {
       log(lvl, "No native support for %s (%s)", os, e.getMessage());
     }
   }
+  //</editor-fold>
 
+	//<editor-fold defaultstate="collapsed" desc="save / restore session">
   private boolean saveSession(int action, boolean quitting) {
-    int nTab = _mainPane.getTabCount();
+    int nTab = tabPane.getTabCount();
     StringBuilder sbuf = new StringBuilder();
     for (int tabIndex = 0; tabIndex < nTab; tabIndex++) {
       try {
-        JScrollPane scrPane = (JScrollPane) _mainPane.getComponentAt(tabIndex);
+        JScrollPane scrPane = (JScrollPane) tabPane.getComponentAt(tabIndex);
         EditorPane codePane = (EditorPane) scrPane.getViewport().getView();
         if (action == WARNING_DO_NOTHING) {
           if (quitting) {
             codePane.setDirty(false);
-            if (codePane.isSourceBundleTemp()) {
-              FileManager.deleteTempDir(codePane.getSrcBundle());
-            }
+//            if (codePane.isSourceBundleTemp()) {
+//              FileManager.deleteTempDir(codePane.getSrcBundle());
+//            }
           }
           if (codePane.getCurrentFilename() == null) {
             continue;
@@ -494,7 +494,7 @@ public class SikuliIDE extends JFrame {
   private void restoreSession() {
     String session_str = prefs.getIdeSession();
     String[] filenames = null;
-    if (session_str == null && loadScript == null) {
+    if (session_str == null && loadScripts == null) {
       return;
     }
     filenames = session_str.split(";");
@@ -510,24 +510,24 @@ public class SikuliIDE extends JFrame {
         }
       }
     }
-    if (loadScript == null) {
+    if (loadScripts == null) {
       return;
     }
     int ao;
-    for (int i = 0; i < loadScript.length; i++) {
-      if (loadScript[i].isEmpty()) {
+    for (int i = 0; i < loadScripts.length; i++) {
+      if (loadScripts[i].isEmpty()) {
         continue;
       }
-      File f = new File(loadScript[i]);
+      File f = new File(loadScripts[i]);
       if (f.exists()) {
-        if (restoreScriptFromSession(loadScript[i])) {
+        if (restoreScriptFromSession(loadScripts[i])) {
           ao = isAlreadyOpen(getCurrentCodePane().getCurrentSrcDir());
           if (ao < 0) {
             restoredScripts += 1;
-            Debug.log(3, "preload script at %d: " + loadScript[i], restoredScripts + 1);
+            Debug.log(3, "preload script at %d: " + loadScripts[i], restoredScripts + 1);
           } else {
-            _mainPane.remove(ao);
-            Debug.log(3, "preload session script at %d: " + loadScript[i], restoredScripts + 1);
+            tabPane.remove(ao);
+            Debug.log(3, "preload session script at %d: " + loadScripts[i], restoredScripts + 1);
           }
         }
       }
@@ -545,7 +545,7 @@ public class SikuliIDE extends JFrame {
 //    (new FileAction()).doCloseTab(null);
     return false;
   }
-  //</editor-fold>
+//</editor-fold>
 
   //<editor-fold defaultstate="collapsed" desc="Support SikuliIDE">
   public JMenu getFileMenu() {
@@ -557,29 +557,41 @@ public class SikuliIDE extends JFrame {
   }
 
   public CloseableTabbedPane getTabPane() {
-    return _mainPane;
+    return tabPane;
   }
 
   public EditorPane getCurrentCodePane() {
-    if (_mainPane.getSelectedIndex() == -1) {
+    if (tabPane.getSelectedIndex() == -1) {
       return null;
     }
-    JScrollPane scrPane = (JScrollPane) _mainPane.getSelectedComponent();
-    EditorPane ret = (EditorPane) scrPane.getViewport().getView();
-    return ret;
+    JScrollPane scrPane = (JScrollPane) tabPane.getSelectedComponent();
+    EditorPane pane = (EditorPane) scrPane.getViewport().getView();
+    return pane;
   }
 
   public void setCurrentFileTabTitle(String fname) {
-    int tabIndex = _mainPane.getSelectedIndex();
+    int tabIndex = tabPane.getSelectedIndex();
     setFileTabTitle(fname, tabIndex);
   }
 
   public String getCurrentFileTabTitle() {
-    String fname = _mainPane.getTitleAt(_mainPane.getSelectedIndex());
+    String fname = tabPane.getTitleAt(tabPane.getSelectedIndex());
     if (fname.startsWith("*")) {
       return fname.substring(1);
     } else {
       return fname;
+    }
+  }
+
+  public void setCurrentFileTabTitleDirty(boolean isDirty) {
+    int i = tabPane.getSelectedIndex();
+    String title = tabPane.getTitleAt(i);
+    if (!isDirty && title.startsWith("*")) {
+      title = title.substring(1);
+      tabPane.setTitleAt(i, title);
+    } else if (isDirty && !title.startsWith("*")) {
+      title = "*" + title;
+      tabPane.setTitleAt(i, title);
     }
   }
 
@@ -590,30 +602,18 @@ public class SikuliIDE extends JFrame {
     }
     fname = fname.substring(fname.lastIndexOf("/") + 1);
     fname = fname.substring(0, fname.lastIndexOf("."));
-    _mainPane.setTitleAt(tabIndex, fname);
+    tabPane.setTitleAt(tabIndex, fname);
     this.setTitle(fullName);
   }
 
-  public void setCurrentFileTabTitleDirty(boolean isDirty) {
-    int i = _mainPane.getSelectedIndex();
-    String title = _mainPane.getTitleAt(i);
-    if (!isDirty && title.startsWith("*")) {
-      title = title.substring(1);
-      _mainPane.setTitleAt(i, title);
-    } else if (isDirty && !title.startsWith("*")) {
-      title = "*" + title;
-      _mainPane.setTitleAt(i, title);
-    }
-  }
-
   public ArrayList<String> getOpenedFilenames() {
-    int nTab = _mainPane.getTabCount();
+    int nTab = tabPane.getTabCount();
     File file = null;
     String filePath;
     ArrayList<String> filenames = new ArrayList<String>(0);
     if (nTab > 0) {
       for (int i = 0; i < nTab; i++) {
-        JScrollPane scrPane = (JScrollPane) _mainPane.getComponentAt(i);
+        JScrollPane scrPane = (JScrollPane) tabPane.getComponentAt(i);
         EditorPane codePane = (EditorPane) scrPane.getViewport().getView();
         file = codePane.getCurrentFile(false);
         if (file != null) {
@@ -630,7 +630,7 @@ public class SikuliIDE extends JFrame {
 
   public int isAlreadyOpen(String filename) {
     int aot = getOpenedFilenames().indexOf(filename);
-    if (aot > -1 && aot < (_mainPane.getTabCount() - 1)) {
+    if (aot > -1 && aot < (tabPane.getTabCount() - 1)) {
       alreadyOpenedTab = aot;
       return aot;
     }
@@ -651,11 +651,11 @@ public class SikuliIDE extends JFrame {
     pref.setCheckUpdateTime();
   }
 
-  public boolean isRunningScript() {
+  public synchronized boolean isRunningScript() {
     return ideIsRunningScript;
   }
 
-  public void setIsRunningScript(boolean state) {
+  public synchronized void setIsRunningScript(boolean state) {
     ideIsRunningScript = state;
   }
 
@@ -719,6 +719,50 @@ public class SikuliIDE extends JFrame {
     JOptionPane.showMessageDialog(this, info,
             "Sikuli About", JOptionPane.PLAIN_MESSAGE);
   }
+
+  private static String[] collectOptions(String type, String[] args) {
+    List<String> resArgs = new ArrayList<String>();
+    if (args != null) {
+      resArgs.addAll(Arrays.asList(args));
+    }
+    String msg = "-----------------------   You might set some options    -----------------------";
+    msg += "\n\n";
+    msg += "-r name       ---   Run script name: foo[.sikuli] or foo.skl (no IDE window)";
+    msg += "\n";
+    msg += "-u [file]        ---   Write user log messages to file (default: <WorkingFolder>/UserLog.txt )";
+    msg += "\n";
+    msg += "-f [file]         ---   Write Sikuli log messages to file (default: <WorkingFolder>/SikuliLog.txt)";
+    msg += "\n";
+    msg += "-d n             ---   Set a higher level n for Sikuli's debug messages (default: 0)";
+    msg += "\n";
+    msg += "-- …more…         All space delimited entries after -- go to sys.argv";
+    msg += "\n                           \"<some text>\" makes one parameter (may contain intermediate blanks)";
+    msg += "\n\n";
+    msg += "-------------------------------------------------------------------------";
+    msg += "\n";
+    msg += "-d                Special debugging option in case of mysterious errors:";
+    msg += "\n";
+    msg += "                    Debug level is set to 3 and debug output goes to <WorkingFolder>/SikuliLog.txt";
+    msg += "\n";
+    msg += "                    Content might be used to ask questions or report bugs";
+    msg += "\n";
+    msg += "-------------------------------------------------------------------------";
+    msg += "\n";
+    msg += "                    Just click OK to start IDE with no options - defaults will be used";
+
+    String ret = JOptionPane.showInputDialog(null, msg, "SikuliX: collect runtime options",
+            JOptionPane.QUESTION_MESSAGE);
+
+    if (ret == null) {
+      return null;
+    }
+    log(3, "collectOptions: returned [" + ret + "]");
+    if (!ret.isEmpty()) {
+      System.setProperty("sikuli.SIKULI_COMMAND", ret);
+      resArgs.addAll(Arrays.asList(ret.split(" +")));
+    }
+    return resArgs.toArray(new String[0]);
+  }
   //</editor-fold>
 
   //<editor-fold defaultstate="collapsed" desc="isInited --- RaiMan not used">
@@ -775,6 +819,12 @@ public class SikuliIDE extends JFrame {
     }
   }
 
+  private static JMenu recentMenu = null;
+  private static Map<String, String> recentProjects = new HashMap<String, String>();
+  private static java.util.List<String> recentProjectsMenu = new ArrayList<String>();
+  private static int recentMax = 10;
+  private static int recentMaxMax = recentMax + 10;
+
   //<editor-fold defaultstate="collapsed" desc="Init FileMenu">
   private void initFileMenu() throws NoSuchMethodException {
     JMenuItem jmi;
@@ -796,6 +846,12 @@ public class SikuliIDE extends JFrame {
             KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_O, scMask),
             new FileAction(FileAction.OPEN)));
     jmi.setName("OPEN");
+
+    recentMenu = new JMenu(_I("menuRecent"));
+
+    if (Settings.experimental) {
+      _fileMenu.add(recentMenu);
+    }
 
     if (Settings.isMac() && !Settings.handlesMacBundles) {
       _fileMenu.add(createMenuItem("Open folder.sikuli ...",
@@ -863,6 +919,7 @@ public class SikuliIDE extends JFrame {
     static final String NEW = "doNew";
     static final String INSERT = "doInsert";
     static final String OPEN = "doLoad";
+    static final String RECENT = "doRecent";
     static final String OPEN_FOLDER = "doLoadFolder";
     static final String SAVE = "doSave";
     static final String SAVE_AS = "doSaveAs";
@@ -872,6 +929,7 @@ public class SikuliIDE extends JFrame {
     static final String CLOSE_TAB = "doCloseTab";
     static final String PREFERENCES = "doPreferences";
     static final String QUIT = "doQuit";
+    static final String ENTRY = "doRecent";
     private int targetTab = -1;
 
     public FileAction() {
@@ -892,6 +950,7 @@ public class SikuliIDE extends JFrame {
     }
 
     public void doQuit(ActionEvent ae) {
+			log(lvl, "doQuit requested");
       SikuliIDE ide = SikuliIDE.getInstance();
       if (!doBeforeQuit()) {
         return;
@@ -906,7 +965,6 @@ public class SikuliIDE extends JFrame {
         }
       }
       Sikulix.cleanUp(0);
-      HotkeyManager.getInstance().cleanUp();
       System.exit(0);
     }
 
@@ -924,15 +982,15 @@ public class SikuliIDE extends JFrame {
       lineNumberColumn = new EditorLineNumberView(codePane);
       scrPane.setRowHeaderView(lineNumberColumn);
       if (ae == null) {
-        if (tabIndex < 0 || tabIndex >= _mainPane.getTabCount()) {
-          _mainPane.addTab(_I("tabUntitled"), scrPane);
+        if (tabIndex < 0 || tabIndex >= tabPane.getTabCount()) {
+          tabPane.addTab(_I("tabUntitled"), scrPane);
         } else {
-          _mainPane.addTab(_I("tabUntitled"), scrPane, tabIndex);
+          tabPane.addTab(_I("tabUntitled"), scrPane, tabIndex);
         }
-        _mainPane.setSelectedIndex(tabIndex < 0 ? _mainPane.getTabCount() - 1 : tabIndex);
+        tabPane.setSelectedIndex(tabIndex < 0 ? tabPane.getTabCount() - 1 : tabIndex);
       } else {
-        _mainPane.addTab(_I("tabUntitled"), scrPane, 0);
-        _mainPane.setSelectedIndex(0);
+        tabPane.addTab(_I("tabUntitled"), scrPane, 0);
+        tabPane.setSelectedIndex(0);
       }
       codePane.getSrcBundle();
       codePane.requestFocus();
@@ -949,11 +1007,11 @@ public class SikuliIDE extends JFrame {
         accessingAsFile = !ACCESSING_AS_FOLDER;
         ACCESSING_AS_FOLDER = false;
       }
-      alreadyOpenedTab = _mainPane.getSelectedIndex();
-      String fname = _mainPane.getLastClosed();
+      alreadyOpenedTab = tabPane.getSelectedIndex();
+      String fname = tabPane.getLastClosed();
       try {
         doNew(null, targetTab);
-        EditorPane codePane = SikuliIDE.getInstance().getCurrentCodePane();
+        EditorPane codePane = getCurrentCodePane();
         if (ae != null || fname == null) {
           codePane.isSourceBundleTemp();
           fname = codePane.loadFile(accessingAsFile);
@@ -971,12 +1029,47 @@ public class SikuliIDE extends JFrame {
           if (ae != null) {
             doCloseTab(null);
           }
-          _mainPane.setSelectedIndex(alreadyOpenedTab);
+          tabPane.setSelectedIndex(alreadyOpenedTab);
         }
+        doRecentAdd(getCurrentCodePane());
       } catch (IOException eio) {
         log(-1, "Problem when trying to load %s\nError: %s",
                 fname, eio.getMessage());
       }
+    }
+
+    private void doRecentAdd(EditorPane codePane ) {
+      String fPath = new File(codePane.getSrcBundle()).getAbsolutePath();
+      if (Settings.experimental) {
+        log(3, "doRecentAdd: %s", fPath);
+        String fName = new File(fPath).getName();
+        if (recentProjectsMenu.contains(fName)) {
+          recentProjectsMenu.remove(fName);
+        } else {
+          recentProjects.put(fName, fPath);
+          if (recentProjectsMenu.size() == recentMaxMax) {
+            String fObsolete = recentProjectsMenu.remove(recentMax - 1);
+            recentProjects.remove(fObsolete);
+          }
+        }
+        recentProjectsMenu.add(0, fName);
+        recentMenu.removeAll();
+        for (String entry : recentProjectsMenu.subList(1, recentProjectsMenu.size())) {
+          if (isAlreadyOpen(recentProjects.get(entry)) > -1) {
+            continue;
+          }
+          try {
+            recentMenu.add(createMenuItem(entry,
+                    null,
+                    new FileAction(FileAction.ENTRY)));
+          } catch (NoSuchMethodException ex) {
+          }
+        }
+      }
+    }
+
+    public void doRecent(ActionEvent ae) {
+      log(3, "doRecent: menuOpenRecent: %s", ae.getActionCommand());
     }
 
     public void doLoadFolder(ActionEvent ae) {
@@ -993,7 +1086,7 @@ public class SikuliIDE extends JFrame {
         if (fname != null) {
           fname = codePane.getSrcBundle();
           SikuliIDE.getInstance().setCurrentFileTabTitle(fname);
-          _mainPane.setLastClosed(fname);
+          tabPane.setLastClosed(fname);
         }
       } catch (IOException eio) {
         log(-1, "Problem when trying to save %s\nError: %s",
@@ -1002,10 +1095,10 @@ public class SikuliIDE extends JFrame {
     }
 
     public boolean doSaveIntern(int tabIndex) {
-      int currentTab = _mainPane.getSelectedIndex();
-      _mainPane.setSelectedIndex(tabIndex);
+      int currentTab = tabPane.getSelectedIndex();
+      tabPane.setSelectedIndex(tabIndex);
       boolean retval = true;
-      JScrollPane scrPane = (JScrollPane) _mainPane.getComponentAt(tabIndex);
+      JScrollPane scrPane = (JScrollPane) tabPane.getComponentAt(tabIndex);
       EditorPane codePane = (EditorPane) scrPane.getViewport().getView();
       String fname = null;
       try {
@@ -1020,7 +1113,7 @@ public class SikuliIDE extends JFrame {
                 fname, eio.getMessage());
         retval = false;
       }
-      _mainPane.setSelectedIndex(currentTab);
+      tabPane.setSelectedIndex(currentTab);
       return retval;
     }
 
@@ -1031,26 +1124,29 @@ public class SikuliIDE extends JFrame {
         ACCESSING_AS_FOLDER = false;
       }
       String fname = null;
+      EditorPane codePane = SikuliIDE.getInstance().getCurrentCodePane();
+			String orgName = codePane.getCurrentShortFilename();
+			log(lvl, "doSaveAs requested: %s", orgName);
       try {
-        EditorPane codePane = SikuliIDE.getInstance().getCurrentCodePane();
         fname = codePane.saveAsFile(accessingAsFile);
         if (fname != null) {
           SikuliIDE.getInstance().setCurrentFileTabTitle(fname);
-        }
+        } else {
+	        log(-1, "doSaveAs: %s not completed", orgName);
+				}
       } catch (IOException eio) {
-        log(-1, "Problem when trying to save %s\nError: %s",
-                fname, eio.getMessage());
+        log(-1, "doSaveAs: %s Error: %s", orgName, eio.getMessage());
       }
     }
 
     public void doSaveAsFolder(ActionEvent ae) {
-      Debug.log(3, "IDE: doSaveAsFolder requested");
+      log(lvl, "doSaveAsFolder requested");
       ACCESSING_AS_FOLDER = true;
       doSaveAs(ae);
     }
 
     public void doSaveAll(ActionEvent ae) {
-      Debug.log(3, "IDE: doSaveAll requested");
+			log(lvl, "doSaveAll requested");
       if (!checkDirtyPanes()) {
         return;
       }
@@ -1058,9 +1154,11 @@ public class SikuliIDE extends JFrame {
     }
 
     public void doExport(ActionEvent ae) {
+			EditorPane codePane = SikuliIDE.getInstance().getCurrentCodePane();
+			String orgName = codePane.getCurrentShortFilename();
+			log(lvl, "doExport requested: %s", orgName);
       String fname = null;
       try {
-        EditorPane codePane = SikuliIDE.getInstance().getCurrentCodePane();
         fname = codePane.exportAsZip();
       } catch (Exception ex) {
         log(-1, "Problem when trying to save %s\nError: %s",
@@ -1069,14 +1167,16 @@ public class SikuliIDE extends JFrame {
     }
 
     public void doCloseTab(ActionEvent ae) {
-      EditorPane codePane = SikuliIDE.getInstance().getCurrentCodePane();
       if (ae == null) {
-        _mainPane.remove(_mainPane.getSelectedIndex());
+        tabPane.remove(tabPane.getSelectedIndex());
         return;
       }
+      EditorPane codePane = SikuliIDE.getInstance().getCurrentCodePane();
+			String orgName = codePane.getCurrentShortFilename();
+			log(lvl, "doCloseTab requested: %s", orgName);
       try {
         if (codePane.close()) {
-          _mainPane.remove(_mainPane.getSelectedIndex());
+          tabPane.remove(tabPane.getSelectedIndex());
         }
       } catch (IOException e) {
         Debug.info("Can't close this tab: " + e.getStackTrace());
@@ -1120,9 +1220,9 @@ public class SikuliIDE extends JFrame {
   }
 
   protected boolean checkDirtyPanes() {
-    for (int i = 0; i < _mainPane.getTabCount(); i++) {
+    for (int i = 0; i < tabPane.getTabCount(); i++) {
       try {
-        JScrollPane scrPane = (JScrollPane) _mainPane.getComponentAt(i);
+        JScrollPane scrPane = (JScrollPane) tabPane.getComponentAt(i);
         EditorPane codePane = (EditorPane) scrPane.getViewport().getView();
         if (codePane.isDirty()) {
           //RaiMan not used: getRootPane().putClientProperty("Window.documentModified", true);
@@ -1236,6 +1336,17 @@ public class SikuliIDE extends JFrame {
       SikuliIDE ide = SikuliIDE.getInstance();
       EditorPane pane = ide.getCurrentCodePane();
       (new SikuliEditorKit.DeindentAction()).actionPerformed(pane);
+    }
+  }
+
+  class OpenRecent extends MenuAction {
+
+    public OpenRecent() {
+      super();
+    }
+
+    public void openRecent(ActionEvent ae) {
+      log(lvl, "openRecent: %s", ae.getActionCommand());
     }
   }
 
@@ -1992,76 +2103,92 @@ public class SikuliIDE extends JFrame {
       runCurrentScript();
     }
 
-    public void runCurrentScript() {
-      SikuliIDE.getStatusbar().setMessage("... PLEASE WAIT ... checking IDE state before running script");
-      SikuliIDE ide = SikuliIDE.getInstance();
-      if (ideIsRunningScript || !ide.doBeforeRun()) {
-        return;
-      }
-      SikuliIDE.getStatusbar().resetMessage();
-      ide.setVisible(false);
-      if (ide.firstRun) {
-//        Sikulix.displaySplashFirstTime(new String[0]);
-        ide.firstRun = false;
-      }
-      ide.setIsRunningScript(true);
-      _runningThread = new Thread() {
-        @Override
-        public void run() {
-          EditorPane codePane = SikuliIDE.getInstance().getCurrentCodePane();
-          File tmpFile;
-          tmpFile = FileManager.createTempFile(Settings.TypeEndings.get(codePane.getSikuliContentType()));
-          if (tmpFile == null) {
-            return;
-          }
-          try {
-            BufferedWriter bw = new BufferedWriter(
-                    new OutputStreamWriter(
-                            new FileOutputStream(tmpFile),
-                            "UTF8"));
-            codePane.write(bw);
-            //SikuliIDE.getInstance().setVisible(false);
-            _console.clear();
-            resetErrorMark();
-            runScript(tmpFile, codePane);
-          } catch (Exception e) {
-          } finally {
-            SikuliIDE.getInstance().setIsRunningScript(false);
-            SikuliIDE.getInstance().setVisible(true);
-            _runningThread = null;
-            Sikulix.cleanUp(0);
-          }
-        }
-      };
-      _runningThread.start();
-    }
-
-    private void runScript(File sfile, EditorPane pane) throws Exception {
-      File path = new File(SikuliIDE.getInstance().getCurrentBundlePath());
-      File parent = path.getParentFile();
-      //TODO implement alternative script types
-      String runnerType = null;
-      String cType = pane.getContentType();
-      runnerType = cType.equals(Settings.CPYTHON) ? Settings.RPYTHON : Settings.RRUBY;
-      IScriptRunner srunner = Sikulix.getScriptRunner(runnerType, null, Settings.getArgs());
-      if (srunner == null) {
-        Debug.error("Could not load a script runner for: %s (%s)", cType, runnerType);
-        return;
-      }
-      addScriptCode(srunner);
-      try {
-        ImagePath.resetBundlePath(path.getAbsolutePath());
-				String tabtitle = _mainPane.getTitleAt(_mainPane.getSelectedIndex());
-				if (tabtitle.startsWith("*")) tabtitle = tabtitle.substring(1);
-        int ret = srunner.runScript(sfile, path, Settings.getArgs(),
-								new String[]{parent.getAbsolutePath(), tabtitle});
-        addErrorMark(ret);
-        srunner.close();
-      } catch (Exception e) {
-        srunner.close();
-        throw e;
-      }
-    }
+		public void runCurrentScript() {
+			SikuliIDE.getStatusbar().setMessage("... PLEASE WAIT ... checking IDE state before running script");
+			SikuliIDE ide = SikuliIDE.getInstance();
+			if (ideIsRunningScript || !ide.doBeforeRun()) {
+				return;
+			}
+			SikuliIDE.getStatusbar().resetMessage();
+			ide.setVisible(false);
+			if (ide.firstRun) {
+//        SikulixUtil.displaySplashFirstTime(new String[0]);
+				ide.firstRun = false;
+			}
+			ide.setIsRunningScript(true);
+			final IScriptRunner[] srunners = new IScriptRunner[] {null};
+			_runningThread = new Thread() {
+				@Override
+				public void run() {
+					EditorPane codePane = SikuliIDE.getInstance().getCurrentCodePane();
+					File tmpFile;
+					tmpFile = FileManager.createTempFile(ScriptRunner.TypeEndings.get(codePane.getSikuliContentType()));
+					if (tmpFile == null) {
+						return;
+					}
+					try {
+						BufferedWriter bw = new BufferedWriter(
+										new OutputStreamWriter(
+														new FileOutputStream(tmpFile),
+														"UTF8"));
+						codePane.write(bw);
+						//SikuliIDE.getInstance().setVisible(false);
+						_console.clear();
+						resetErrorMark();
+//            runScript(tmpFile, codePane);
+						File path = new File(SikuliIDE.getInstance().getCurrentBundlePath());
+						File parent = path.getParentFile();
+						//TODO implement alternative script types
+						String runnerType = null;
+						String cType = codePane.getContentType();
+						runnerType = cType.equals(ScriptRunner.CPYTHON) ? ScriptRunner.RPYTHON : ScriptRunner.RRUBY;
+						IScriptRunner srunner = ScriptRunner.getScriptRunner(runnerType, null, Settings.getArgs());
+						if (srunner == null) {
+							Debug.error("Could not load a script runner for: %s (%s)", cType, runnerType);
+							return;
+						}
+						addScriptCode(srunner);
+						srunners[0] = srunner;
+						try {
+							ImagePath.reset(path.getAbsolutePath());
+							String tabtitle = tabPane.getTitleAt(tabPane.getSelectedIndex());
+							if (tabtitle.startsWith("*")) {
+								tabtitle = tabtitle.substring(1);
+							}
+							int ret = srunner.runScript(tmpFile, path, Settings.getArgs(),
+											new String[]{parent.getAbsolutePath(), tabtitle});
+							addErrorMark(ret);
+							srunner.close();
+							srunners[0] = null;
+						} catch (Exception e) {
+							srunner.close();
+							srunners[0] = null;
+							throw e;
+						}
+					} catch (Exception e) {
+					} finally {
+						SikuliIDE.getInstance().setIsRunningScript(false);
+						SikuliIDE.getInstance().setVisible(true);
+						_runningThread = null;
+						Sikulix.cleanUp(0);
+					}
+				}
+			};
+			_runningThread.setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+				@Override
+				public void uncaughtException(Thread t, Throwable e) {
+					Debug.error("Jython UncaughtExceptionHandler: trying to cleanup.\n%s", e.getMessage());
+					if (srunners[0] != null) {
+						srunners[0].close();
+					}
+					SikuliIDE.getInstance().setIsRunningScript(false);
+					SikuliIDE.getInstance().setVisible(true);
+					_runningThread = null;
+					Sikulix.cleanUp(0);
+				}
+			});
+			_runningThread.start();
+		}
 
     protected void addScriptCode(IScriptRunner srunner) {
       srunner.execBefore(null);
@@ -2089,7 +2216,7 @@ public class SikuliIDE extends JFrame {
       } else {
         return;
       }
-      JScrollPane scrPane = (JScrollPane) _mainPane.getSelectedComponent();
+      JScrollPane scrPane = (JScrollPane) tabPane.getSelectedComponent();
       EditorLineNumberView lnview = (EditorLineNumberView) (scrPane.getRowHeader().getView());
       lnview.addErrorMark(line);
       EditorPane codePane = SikuliIDE.this.getCurrentCodePane();
@@ -2098,7 +2225,7 @@ public class SikuliIDE extends JFrame {
     }
 
     public void resetErrorMark() {
-      JScrollPane scrPane = (JScrollPane) _mainPane.getSelectedComponent();
+      JScrollPane scrPane = (JScrollPane) tabPane.getSelectedComponent();
       EditorLineNumberView lnview = (EditorLineNumberView) (scrPane.getRowHeader().getView());
       lnview.resetErrorMark();
     }
@@ -2178,21 +2305,21 @@ public class SikuliIDE extends JFrame {
   //</editor-fold>
 
   private void initTabPane() {
-    _mainPane = new CloseableTabbedPane();
-    _mainPane.setUI(new AquaCloseableTabbedPaneUI());
-    _mainPane.addCloseableTabbedPaneListener(
+    tabPane = new CloseableTabbedPane();
+    tabPane.setUI(new AquaCloseableTabbedPaneUI());
+    tabPane.addCloseableTabbedPaneListener(
             new CloseableTabbedPaneListener() {
               @Override
               public boolean closeTab(int i) {
                 EditorPane codePane;
                 try {
-                  JScrollPane scrPane = (JScrollPane) _mainPane.getComponentAt(i);
+                  JScrollPane scrPane = (JScrollPane) tabPane.getComponentAt(i);
                   codePane = (EditorPane) scrPane.getViewport().getView();
-                  _mainPane.setLastClosed(codePane.getSrcBundle());
-                  Debug.log(4, "close tab " + i + " n:" + _mainPane.getComponentCount());
+                  tabPane.setLastClosed(codePane.getSrcBundle());
+                  Debug.log(4, "close tab " + i + " n:" + tabPane.getComponentCount());
                   boolean ret = codePane.close();
-                  Debug.log(4, "after close tab n:" + _mainPane.getComponentCount());
-                  if (ret && _mainPane.getTabCount() < 2) {
+                  Debug.log(4, "after close tab n:" + tabPane.getComponentCount());
+                  if (ret && tabPane.getTabCount() < 2) {
                     (new FileAction()).doNew(null);
                   }
                   return ret;
@@ -2203,14 +2330,14 @@ public class SikuliIDE extends JFrame {
               }
             });
 
-    _mainPane.addChangeListener(new ChangeListener() {
+    tabPane.addChangeListener(new ChangeListener() {
       @Override
       public void stateChanged(javax.swing.event.ChangeEvent e) {
         EditorPane codePane = null;
         JTabbedPane tab = (JTabbedPane) e.getSource();
         int i = tab.getSelectedIndex();
         if (i >= 0) {
-          JScrollPane scrPane = (JScrollPane) _mainPane.getComponentAt(i);
+          JScrollPane scrPane = (JScrollPane) tabPane.getComponentAt(i);
           codePane = (EditorPane) scrPane.getViewport().getView();
           String fname = codePane.getCurrentSrcDir();
           if (fname == null) {
@@ -2287,10 +2414,10 @@ public class SikuliIDE extends JFrame {
   }
 
   public static SikuliIDEStatusBar getStatusbar() {
-    if (_instance == null) {
+    if (sikulixIDE == null) {
       return null;
     } else {
-      return _instance._status;
+      return sikulixIDE._status;
     }
   }
 
@@ -2322,15 +2449,15 @@ public class SikuliIDE extends JFrame {
 
   //<editor-fold defaultstate="collapsed" desc="Init ShortCuts HotKeys">
   private void nextTab() {
-    int i = _mainPane.getSelectedIndex();
-    int next = (i + 1) % _mainPane.getTabCount();
-    _mainPane.setSelectedIndex(next);
+    int i = tabPane.getSelectedIndex();
+    int next = (i + 1) % tabPane.getTabCount();
+    tabPane.setSelectedIndex(next);
   }
 
   private void prevTab() {
-    int i = _mainPane.getSelectedIndex();
-    int prev = (i - 1 + _mainPane.getTabCount()) % _mainPane.getTabCount();
-    _mainPane.setSelectedIndex(prev);
+    int i = tabPane.getSelectedIndex();
+    int prev = (i - 1 + tabPane.getTabCount()) % tabPane.getTabCount();
+    tabPane.setSelectedIndex(prev);
   }
 
   private void initShortcutKeys() {

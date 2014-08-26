@@ -12,22 +12,25 @@ import java.net.InetAddress;
 import java.net.Proxy;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.util.ArrayList;
 import java.util.Date;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
 import java.util.Properties;
-import java.util.ServiceLoader;
 import java.util.prefs.Preferences;
+import org.sikuli.script.Sikulix;
 
 /**
  * This is the container for all
  */
 public class Settings {
 
-	public static int SikuliVersionMajor;
+  public static boolean experimental = false;
+
+	private static String me = "Settings: ";
+	private static int lvl = 3;
+	private static void log(int level, String message, Object... args) {
+		Debug.logx(level, me + message, args);
+	}
+
+  public static int SikuliVersionMajor;
 	public static int SikuliVersionMinor;
 	public static int SikuliVersionSub;
 	public static int SikuliVersionBetaN;
@@ -47,13 +50,9 @@ public class Settings {
 	private static final String dlDevLink = "http://nightly.sikuli.de/";
 	private static final String dlMavenLink = "http://search.maven.org/remotecontent?filepath=";
 
-	private static String me = "Settings";
-	private static int lvl = 3;
-
-	private static void log(int level, String message, Object... args) {
-		Debug.logx(level, level < 0 ? "error" : "debug",
-						me + ": " + message, args);
-	}
+  public static boolean runningSetupInValidContext = false;
+  public static String runningSetupInContext = null;
+  public static String runningSetupWithJar = null;
 
 	public static int breakPoint = 0;
 	public static boolean handlesMacBundles = true;
@@ -133,24 +132,6 @@ public class Settings {
 	public static Proxy proxy = null;
 
 	private static Preferences options = Preferences.userNodeForPackage(Sikulix.class);
-
-	public static Map<String, IDESupport> ideSupporter = new HashMap<String, IDESupport>();
-	public static Map<String, IScriptRunner> scriptRunner = new HashMap<String, IScriptRunner>();
-	private static List<String> supportedRunner = new ArrayList<String>();
-	public static Map<String, String> EndingTypes = new HashMap<String, String>();
-	public static Map<String, String> TypeEndings = new HashMap<String, String>();
-	public static String CPYTHON = "text/python";
-	public static String CRUBY = "text/ruby";
-	public static String CPLAIN = "text/plain";
-	public static String EPYTHON = "py";
-	public static String ERUBY = "rb";
-	public static String EPLAIN = "txt";
-	public static String RPYTHON = "jython";
-	public static String RRUBY = "jruby";
-	public static String RDEFAULT = "NotDefined";
-	public static String EDEFAULT = EPYTHON;
-	public static String TypeCommentToken = "---SikuliX---";
-	public static String TypeCommentDefault = "# This script uses %s " + TypeCommentToken + "\n";
 
 	static {
 		if (System.getProperty("user.name") != null && !"".equals(System.getProperty("user.name"))) {
@@ -248,79 +229,28 @@ public class Settings {
 			Debug.error("Settings: load version file %s did not work", svf);
 			Sikulix.terminate(999);
 		}
-
-		EndingTypes.put("py", CPYTHON);
-		EndingTypes.put("rb", CRUBY);
-		EndingTypes.put("txt", CPLAIN);
-		for (String k : EndingTypes.keySet()) {
-			TypeEndings.put(EndingTypes.get(k), k);
-		}
 	}
 
   public static String getSystemInfo() {
     return String.format("%s/%s/%s", SikuliVersionLong, SikuliSystemVersion, SikuliJavaVersion);
   }
 
-  public static void getStatus() {
-    log(lvl, "***** Information Dump *****");
-    log(lvl, "*** SystemInfo\n%s", getSystemInfo());
+  public static void getStatus(int level) {
+    log(level, "***** Information Dump *****");
+    log(level, "*** SystemInfo\n%s", getSystemInfo());
     System.getProperties().list(System.out);
-    log(lvl, "*** System Environment");
+    log(level, "*** System Environment");
     for (String key : System.getenv().keySet()) {
       System.out.println(String.format("%s = %s", key, System.getenv(key)));
     }
-    log(lvl, "*** Java Class Path");
+    log(level, "*** Java Class Path");
     URLClassLoader sysLoader = (URLClassLoader) ClassLoader.getSystemClassLoader();
     URL[] urls = sysLoader.getURLs();
     for (int i = 0; i < urls.length; i++) {
       System.out.println(String.format("%d: %s", i, urls[i]));
     }
-    log(lvl, "***** Information Dump ***** end *****");
+    log(level, "***** Information Dump ***** end *****");
   }
-
-	public static void initScriptingSupport() {
-		if (scriptRunner.size() == 0) {
-			ServiceLoader<IDESupport> sloader = ServiceLoader.load(IDESupport.class);
-			Iterator<IDESupport> supIterator = sloader.iterator();
-			while (supIterator.hasNext()) {
-				IDESupport current = supIterator.next();
-				try {
-					for (String ending : current.getEndings()) {
-						ideSupporter.put(ending, current);
-					}
-				} catch (Exception ex) {
-				}
-			}
-			ServiceLoader<IScriptRunner> rloader = ServiceLoader.load(IScriptRunner.class);
-			Iterator<IScriptRunner> rIterator = rloader.iterator();
-			while (rIterator.hasNext()) {
-				IScriptRunner current = rIterator.next();
-				String name = current.getName();
-				if (!name.startsWith("Not")) {
-					scriptRunner.put(name, current);
-				}
-			}
-		}
-		if (scriptRunner.size() == 0) {
-			Debug.error("Settings: No scripting support available. Rerun Setup!");
-			Sikulix.popup("No scripting support available. Rerun Setup!", "SikuliX - Fatal Error!");
-			System.exit(1);
-		} else {
-			RDEFAULT = (String) scriptRunner.keySet().toArray()[0];
-			EDEFAULT = scriptRunner.get(RDEFAULT).getFileEndings()[0];
-			for (IScriptRunner r : scriptRunner.values()) {
-				for (String e : r.getFileEndings()) {
-					if (!supportedRunner.contains(EndingTypes.get(e))) {
-						supportedRunner.add(EndingTypes.get(e));
-					}
-				}
-			}
-		}
-	}
-
-	public static boolean hasTypeRunner(String type) {
-		return supportedRunner.contains(type);
-	}
 
   public static String getValidImageFilename(String fname) {
     String validEndings = ".png.jpg.jpeg";
@@ -413,7 +343,7 @@ public class Settings {
 	public static float WaitAfterHighlight = 0.3f;
 	public static boolean ActionLogs = true;
 	public static boolean InfoLogs = true;
-	public static boolean DebugLogs;
+	public static boolean DebugLogs = false;
 	public static boolean ProfileLogs = false;
 	public static boolean LogTime = false;
 	public static boolean UserLogs = true;

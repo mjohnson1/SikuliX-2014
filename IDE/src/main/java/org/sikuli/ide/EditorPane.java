@@ -29,11 +29,12 @@ import javax.swing.text.*;
 import org.sikuli.basics.Settings;
 import org.sikuli.basics.Debug;
 import org.sikuli.basics.FileManager;
-import org.sikuli.basics.IndentationLogic;
+import org.sikuli.idesupport.IIndentationLogic;
 import org.sikuli.script.Location;
-import org.sikuli.basics.Sikulix;
 import org.sikuli.script.Image;
 import org.sikuli.script.ImagePath;
+import org.sikuli.script.Sikulix;
+import org.sikuli.scriptrunner.ScriptRunner;
 import org.sikuli.syntaxhighlight.ResolutionException;
 import org.sikuli.syntaxhighlight.grammar.Lexer;
 import org.sikuli.syntaxhighlight.grammar.Token;
@@ -41,46 +42,60 @@ import org.sikuli.syntaxhighlight.grammar.TokenType;
 
 public class EditorPane extends JTextPane implements KeyListener, CaretListener {
 
-	private static final String me = "EditorPane";
+	private static final String me = "EditorPane: ";
   private static final int lvl = 3;
-
   private static void log(int level, String message, Object... args) {
-    Debug.logx(level, "", me + ": " + message, args);
+    Debug.logx(level, me + message, args);
   }
 
 	private static TransferHandler transferHandler = null;
 	private static final Map<String, Lexer> lexers = new HashMap<String, Lexer>();
 	private PreferencesUser pref;
-	private File _editingFile;
-	private String editingType = null;
+
+  private File scriptSource = null;
+  private File scriptParent = null;
+  private File scriptImages = null;
+  private String scriptType = null;
+  private boolean scriptIsTemp = false;
+
+  private boolean scriptIsDirty = false;
+  private DirtyHandler dirtyHandler;
+
+  private File _editingFile;
+//	private String scriptType = null;
 	private String _srcBundlePath = null;
 	private boolean _srcBundleTemp = false;
-	private boolean _dirty = false;
-	private EditorCurrentLineHighlighter _highlighter = null;
+	private String sikuliContentType;
+
+  private EditorCurrentLineHighlighter _highlighter = null;
 	private EditorUndoManager _undo = null;
-	private boolean hasErrorHighlight = false;
-	public boolean showThumbs;
 	// TODO: move to SikuliDocument ????
-	private IndentationLogic _indentationLogic = null;
+	private IIndentationLogic _indentationLogic = null;
+
+  private boolean hasErrorHighlight = false;
+
+  public boolean showThumbs;
 	static Pattern patPngStr = Pattern.compile("(\"[^\"]+?\\.(?i)(png|jpg|jpeg)\")");
 	static Pattern patCaptureBtn = Pattern.compile("(\"__CLICK-TO-CAPTURE__\")");
 	static Pattern patPatternStr = Pattern.compile(
 					"\\b(Pattern\\s*\\(\".*?\"\\)(\\.\\w+\\([^)]*\\))+)");
 	static Pattern patRegionStr = Pattern.compile(
 					"\\b(Region\\s*\\([\\d\\s,]+\\))");
-	//TODO what is it for???
+
+  //TODO what is it for???
 	private int _caret_last_x = -1;
 	private boolean _can_update_caret_last_x = true;
 	private SikuliIDEPopUpMenu popMenuImage;
-	private String sikuliContentType;
 	private SikuliEditorKit editorKit;
 	private EditorViewFactory editorViewFactory;
-  private DirtyHandler dirtyHandler;
+  private SikuliIDE sikuliIDE = null;
 
 	//<editor-fold defaultstate="collapsed" desc="Initialization">
 	public EditorPane(SikuliIDE ide) {
 		pref = PreferencesUser.getInstance();
 		showThumbs = !pref.getPrefMorePlainText();
+    sikuliIDE = ide;
+    log(lvl, "EditorPane: creating new pane (constructor)");
 	}
 
 	public void initBeforeLoad(String scriptType) {
@@ -91,26 +106,26 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 		initBeforeLoad(scriptType, true);
 	}
 
-	public void initBeforeLoad(String scriptType, boolean reInit) {
+	private void initBeforeLoad(String scriptType, boolean reInit) {
 		String scrType = null;
 		boolean paneIsEmpty = false;
 
     log(lvl, "initBeforeLoad: %s", scriptType);
 		if (scriptType == null) {
-			scriptType = Settings.EDEFAULT;
+			scriptType = ScriptRunner.EDEFAULT;
 			paneIsEmpty = true;
 		}
 
-		if (Settings.EPYTHON.equals(scriptType)) {
-			scrType = Settings.CPYTHON;
+		if (ScriptRunner.EPYTHON.equals(scriptType)) {
+			scrType = ScriptRunner.CPYTHON;
 			_indentationLogic = SikuliIDE.getIDESupport(scriptType).getIndentationLogic();
 			_indentationLogic.setTabWidth(pref.getTabWidth());
-		} else if (Settings.ERUBY.equals(scriptType)) {
-			scrType = Settings.CRUBY;
+		} else if (ScriptRunner.ERUBY.equals(scriptType)) {
+			scrType = ScriptRunner.CRUBY;
 			_indentationLogic = null;
 		}
 
-//TODO should know, that scripttype not changed here to avoid unnecessary new setups    
+//TODO should know, that scripttype not changed here to avoid unnecessary new setups
 		if (scrType != null) {
 			sikuliContentType = scrType;
 			editorKit = new SikuliEditorKit();
@@ -164,7 +179,7 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 		}
 		SikuliIDE.getStatusbar().setCurrentContentType(getSikuliContentType());
 		log(lvl, "InitTab: (%s)", getSikuliContentType());
-		if (!Settings.hasTypeRunner(getSikuliContentType())) {
+		if (!ScriptRunner.hasTypeRunner(getSikuliContentType())) {
 			Sikulix.popup("No installed runner supports (" + getSikuliContentType() + ")\n"
 							+ "Trying to run the script will crash IDE!", "... serious problem detected!");
 		}
@@ -194,7 +209,7 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 		return _undo;
 	}
 
-	public IndentationLogic getIndentationLogic() {
+	public IIndentationLogic getIndentationLogic() {
 		return _indentationLogic;
 	}
 
@@ -222,13 +237,12 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 
 	//<editor-fold defaultstate="collapsed" desc="file handling">
 	public String loadFile(boolean accessingAsFile) throws IOException {
-		File file = new SikuliIDEFileChooser(SikuliIDE.getInstance(), accessingAsFile).load();
+		File file = new SikuliIDEFileChooser(sikuliIDE, accessingAsFile).load();
 		if (file == null) {
 			return null;
 		}
 		String fname = FileManager.slashify(file.getAbsolutePath(), false);
-		SikuliIDE ide = SikuliIDE.getInstance();
-		int i = ide.isAlreadyOpen(fname);
+		int i = sikuliIDE.isAlreadyOpen(fname);
 		if (i > -1) {
 			log(lvl, "loadFile: Already open in IDE: " + fname);
 			return null;
@@ -245,10 +259,10 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 		filename = FileManager.slashify(filename, false);
 		setSrcBundle(filename + "/");
 		File script = new File(filename);
-		_editingFile = FileManager.getScriptFile(script, null, null);
+		_editingFile = ScriptRunner.getScriptFile(script, null, null);
 		if (_editingFile != null) {
-			editingType = _editingFile.getAbsolutePath().substring(_editingFile.getAbsolutePath().lastIndexOf(".") + 1);
-			initBeforeLoad(editingType);
+			scriptType = _editingFile.getAbsolutePath().substring(_editingFile.getAbsolutePath().lastIndexOf(".") + 1);
+			initBeforeLoad(scriptType);
 			try {
 				this.read(new BufferedReader(new InputStreamReader(
 								new FileInputStream(_editingFile), "UTF8")), null);
@@ -272,14 +286,13 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 		if (_editingFile == null) {
 			return saveAsFile(Settings.isMac());
 		} else {
-			ImagePath.remove(_srcBundlePath);
 			writeSrcFile();
 			return getCurrentShortFilename();
 		}
 	}
 
 	public String saveAsFile(boolean accessingAsFile) throws IOException {
-		File file = new SikuliIDEFileChooser(SikuliIDE.getInstance(), accessingAsFile).save();
+		File file = new SikuliIDEFileChooser(sikuliIDE, accessingAsFile).save();
 		if (file == null) {
 			return null;
 		}
@@ -294,11 +307,11 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 			if (res != JOptionPane.YES_OPTION) {
 				return null;
 			}
-		} else {
-			FileManager.mkdir(bundlePath);
+			FileManager.deleteFileOrFolder(bundlePath);
 		}
+		FileManager.mkdir(bundlePath);
 		try {
-			saveAsBundle(bundlePath, (SikuliIDE.getInstance().getCurrentFileTabTitle()));
+			saveAsBundle(bundlePath, (sikuliIDE.getCurrentFileTabTitle()));
 			if (Settings.isMac()) {
 				if (!Settings.handlesMacBundles) {
 					makeBundle(bundlePath, accessingAsFile);
@@ -327,18 +340,20 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 
 	private void saveAsBundle(String bundlePath, String current) throws IOException {
 //TODO allow other file types
+		log(lvl, "saveAsBundle: " + getSrcBundle());
 		bundlePath = FileManager.slashify(bundlePath, true);
 		if (_srcBundlePath != null) {
-			FileManager.xcopy(_srcBundlePath, bundlePath, current);
+			if (!ScriptRunner.transferScript(_srcBundlePath, bundlePath)) {
+				log(-1, "saveAsBundle: did not work - ");
+			}
 		}
+		ImagePath.remove(_srcBundlePath);
 		if (_srcBundleTemp) {
 			FileManager.deleteTempDir(_srcBundlePath);
 			_srcBundleTemp = false;
 		}
-		ImagePath.remove(_srcBundlePath);
 		setSrcBundle(bundlePath);
-		_editingFile = createSourceFile(bundlePath, "." + Settings.TypeEndings.get(sikuliContentType));
-		log(lvl, "saveAsBundle: " + getSrcBundle());
+		_editingFile = createSourceFile(bundlePath, "." + ScriptRunner.TypeEndings.get(sikuliContentType));
 		writeSrcFile();
 		reparse();
 	}
@@ -380,6 +395,7 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 		Lexer lexer = getLexer();
 		Iterable<Token> tokens = lexer.getTokens(scriptText);
 		List<String> usedImages = new ArrayList<String>();
+    usedImages.add(" ");
 		boolean inString = false;
 		String current;
 		for (Token t : tokens) {
@@ -389,7 +405,7 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 				continue;
 			}
 			if (t.getType() == TokenType.String_Doc) {
-				cleanBundleCheckComments(pbundle, lexer, 
+				cleanBundleCheckComments(pbundle, lexer,
                 t.getValue().substring(3, t.getValue().length() - 3), usedImages);
 				continue;
 			}
@@ -404,9 +420,6 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 				continue;
 			}
 			cleanBundleIsImageUsed(pbundle, current, usedImages);
-		}
-		if (usedImages.isEmpty()) {
-			return;
 		}
 		FileManager.deleteNotUsedImages(bundle, usedImages);
 	}
@@ -467,7 +480,7 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 	}
 
 	public String exportAsZip() throws IOException, FileNotFoundException {
-		File file = new SikuliIDEFileChooser(SikuliIDE.getInstance()).export();
+		File file = new SikuliIDEFileChooser(sikuliIDE).export();
 		if (file == null) {
 			return null;
 		}
@@ -491,6 +504,7 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 	}
 
 	public boolean close() throws IOException {
+		log(lvl, "Tab close clicked");
 		if (isDirty()) {
 			Object[] options = {SikuliIDEI18N._I("yes"), SikuliIDEI18N._I("no"), SikuliIDEI18N._I("cancel")};
 			int ans = JOptionPane.showOptionDialog(this,
@@ -508,15 +522,15 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 					return false;
 				}
 			} else {
-				SikuliIDE.getInstance().getTabPane().resetLastClosed();
-			}
-			if (_srcBundleTemp) {
-				FileManager.deleteTempDir(_srcBundlePath);
+				sikuliIDE.getTabPane().resetLastClosed();
 			}
 			setDirty(false);
 		}
 		if (_srcBundlePath != null) {
 			ImagePath.remove(_srcBundlePath);
+			if (_srcBundleTemp) {
+				FileManager.deleteTempDir(_srcBundlePath);
+			}
 		}
 		return true;
 	}
@@ -542,7 +556,7 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 	public String getCurrentSrcDir() {
 		if (_srcBundlePath != null) {
 			if (_editingFile == null || _srcBundleTemp) {
-				return null;
+				return FileManager.normalize(_srcBundlePath);
 			} else {
 				return _editingFile.getParent();
 			}
@@ -551,7 +565,7 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 		}
 	}
 
-	private String getCurrentShortFilename() {
+	public String getCurrentShortFilename() {
 		if (_srcBundlePath != null) {
 			File f = new File(_srcBundlePath);
 			return f.getName();
@@ -584,8 +598,8 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 
 //TODO convertSrcToHtml has to be completely revised
 	private void convertSrcToHtml(String bundle) {
-		if (null != Sikulix.getScriptRunner("jython", null, new String[]{"convertSrcToHtml"})) {
-			Sikulix.getScriptRunner("jython", null, null).doSomethingSpecial("convertSrcToHtml",
+		if (null != ScriptRunner.getScriptRunner("jython", null, new String[]{"convertSrcToHtml"})) {
+			ScriptRunner.getScriptRunner("jython", null, null).doSomethingSpecial("convertSrcToHtml",
 							new String[]{bundle});
 		}
 	}
@@ -619,6 +633,7 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 	}
 
 //</editor-fold>
+
 	//<editor-fold defaultstate="collapsed" desc="fill pane content">
 	@Override
 	public void read(Reader in, Object desc) throws IOException {
@@ -632,22 +647,15 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 
 	//<editor-fold defaultstate="collapsed" desc="Dirty handling">
 	public boolean isDirty() {
-		return _dirty;
+		return scriptIsDirty;
 	}
 
 	public void setDirty(boolean flag) {
-		if (_dirty == flag) {
+		if (scriptIsDirty == flag) {
 			return;
 		}
-		_dirty = flag;
-		//<editor-fold defaultstate="collapsed" desc="RaiMan no global dirty">
-		if (flag) {
-			//RaiManMod getRootPane().putClientProperty("Window.documentModified", true);
-		} else {
-			//SikuliIDE.getInstance().checkDirtyPanes();
-		}
-		//</editor-fold>
-		SikuliIDE.getInstance().setCurrentFileTabTitleDirty(_dirty);
+		scriptIsDirty = flag;
+		sikuliIDE.setCurrentFileTabTitleDirty(scriptIsDirty);
 	}
 
 	private class DirtyHandler implements DocumentListener {
@@ -672,6 +680,7 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 	}
 
 	//</editor-fold>
+
 	//<editor-fold defaultstate="collapsed" desc="Caret handling">
 //TODO not used
 	@Override
@@ -816,7 +825,7 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 		if (e.getEndOffset() - e.getStartOffset() == 1) {
 			return null;
 		}
-		File temp = FileManager.createTempFile("reparse");
+		File temp = FileManager.createTempFile("reparse", Settings.BaseTempPath);
 		try {
 			writeFile(temp.getAbsolutePath());
 			return temp;
@@ -837,7 +846,7 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 			int ie = e.getElement(0).getEndOffset();
 			try {
 				txt = e.getElement(0).getDocument().getText(is, ie - 1);
-				if (txt.endsWith(Settings.TypeCommentToken)) {
+				if (txt.endsWith(ScriptRunner.TypeCommentToken)) {
 					return true;
 				}
 			} catch (BadLocationException ex) {
@@ -1210,6 +1219,7 @@ public class EditorPane extends JTextPane implements KeyListener, CaretListener 
 		}
 	}
 //</editor-fold>
+
 	//<editor-fold defaultstate="collapsed" desc="currently not used">
 	private String _tabString = "   ";
 

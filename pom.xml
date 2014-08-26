@@ -145,9 +145,10 @@
 	</profiles>
 
 	<modules>
-		<module>LibsLux</module>
-		<module>LibsMac</module>
-		<module>LibsWin</module>
+		<module>Libsvision</module>
+		<module>Libslux</module>
+		<module>Libsmac</module>
+		<module>Libswin</module>
 		<module>API</module>
 		<module>APIFat</module>
 		<module>Jygments4SikuliX</module>
@@ -170,6 +171,8 @@
 				<configuration>
 					<source>1.6</source>
 					<target>1.6</target>
+<!--					might be needed for compiling with Java 8 -->
+<!--					<compilerArgument>-XDignore.symbol.file=true</compilerArgument>-->
 				</configuration>
 			</plugin>
 		</plugins>

@@ -9,15 +9,19 @@ import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JPopupMenu;
 import org.sikuli.basics.Debug;
-import org.sikuli.basics.Settings;
-import org.sikuli.basics.Sikulix;
 import org.sikuli.script.Image;
 import org.sikuli.script.ImagePath;
+import org.sikuli.script.Sikulix;
+import org.sikuli.scriptrunner.ScriptRunner;
 
 public class SikuliIDEPopUpMenu extends JPopupMenu {
 
-  private static String me = "SikuliIDEPopUpMenu";
+  private static String me = "SikuliIDEPopUpMenu: ";
   private static int lvl = 3;
+  private static void log(int level, String message, Object... args) {
+    Debug.logx(level, me + message, args);
+  }
+
   private String popType;
   private boolean validMenu = true;
 
@@ -27,7 +31,7 @@ public class SikuliIDEPopUpMenu extends JPopupMenu {
   private EditorPane refEditorPane = null;
   public static final String POP_LINE = "POP_LINE";
   private EditorLineNumberView refLineNumberView = null;
-  
+
   private static String[] selOptionsType = null;
 
   private MouseEvent mouseTrigger;
@@ -39,10 +43,6 @@ public class SikuliIDEPopUpMenu extends JPopupMenu {
    */
   public boolean isValidMenu() {
     return validMenu;
-  }
-
-  private static void log(int level, String message, Object... args) {
-    Debug.logx(level, "", me + ": " + message, args);
   }
 
   public SikuliIDEPopUpMenu(String pType, Object ref) {
@@ -194,7 +194,7 @@ public class SikuliIDEPopUpMenu extends JPopupMenu {
     static final String RUN = "doRun";
     static final String RUN_SLOW = "doRunSlow";
     static final String RESET = "doReset";
-    
+
     public PopTabAction() {
       super();
     }
@@ -209,7 +209,7 @@ public class SikuliIDEPopUpMenu extends JPopupMenu {
 			String error = "";
 			EditorPane cp = SikuliIDE.getInstance().getCurrentCodePane();
       if (selOptionsType == null) {
-        Set<String> types = Settings.TypeEndings.keySet();
+        Set<String> types = ScriptRunner.TypeEndings.keySet();
         selOptionsType = new String[types.size()];
         int i = 0;
         for (String e : types) {
@@ -231,7 +231,7 @@ public class SikuliIDEPopUpMenu extends JPopupMenu {
 				SikuliIDE.getStatusbar().setCurrentContentType(currentType);
 				return;
 			}
-			String targetEnding = Settings.TypeEndings.get(targetType);
+			String targetEnding = ScriptRunner.TypeEndings.get(targetType);
 			if (cp.reparseBefore() != null) {
 				if (!cp.reparseCheckContent()) {
 					if (!Sikulix.popAsk(String.format(
